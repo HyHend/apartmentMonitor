@@ -1,0 +1,399 @@
+<!DOCTYPE html> 
+<html> 
+<head> 
+<meta charset=utf-8> 
+<title>X!</title> 
+<style> 
+  body { 
+    margin: 0; 
+    font-family: Arial, "Helvetica Neue", Helvetica, sans-serif;
+    font-size: 12px;
+    color:#000;
+    background: #FFF;
+  } 
+
+  canvas {
+    -moz-user-select: none;
+    -webkit-user-select: none;
+    -ms-user-select: none;
+  }
+</style> 
+</head> 
+
+<body> 
+
+<!--JS imports-->
+<script src="jsonp.js"></script>
+<script src="moment.min.js"></script>
+<script src="moment-timezone.min.js"></script>
+<script src="moment-timezone-with-data.js"></script>
+<script src="chart.min.js"></script>
+<script src="utils.js"></script>
+<script src="jquery.min.js"></script>
+
+<!--JS-->
+<script>
+  var lines = []
+  var chartColorsOrder = ["red","blue","yellow","green","orange","purple","grey"]
+
+  /**
+   * Returns get query from url
+   */
+  getQueryString = function() {
+    // This function is anonymous, is executed immediately and 
+    // the return value is assigned to QueryString!
+    var query_string = {};
+    var query = window.location.search.substring(1);
+    var vars = query.split("&");
+    for (var i=0;i<vars.length;i++) {
+      var pair = vars[i].split("=");
+      // If first entry with this name
+      if (typeof query_string[pair[0]] === "undefined") {
+        query_string[pair[0]] = decodeURIComponent(pair[1]);
+        // If second entry with this name
+      } else if (typeof query_string[pair[0]] === "string") {
+        var arr = [ query_string[pair[0]],decodeURIComponent(pair[1]) ];
+        query_string[pair[0]] = arr;
+        // If third or later entry with this name
+      } else {
+        query_string[pair[0]].push(decodeURIComponent(pair[1]));
+      }
+    } 
+    return query_string;
+  }
+
+  /**
+   * Sets GET query string with all input values (so a reload will be non resetting)
+   */
+  setQueryString = function() {
+    // Set URL parameters
+    currentParams = {};
+    var baseUrl = window.location.href.split("?")[0];
+    currentParams.ts = document.getElementById('ts').value;
+    currentParams.te = document.getElementById('te').value;
+    for(i=0; i<7; i++) {
+      value = document.getElementById("s"+i).value;
+      if(value != "-") {
+        currentParams['s'+i] = value;
+      }
+    }
+    var newUrl = baseUrl+"?"+$.param(currentParams)
+    window.history.pushState("", "", newUrl);
+  }
+
+  /**
+   * Retrieve list of available sensors
+   */
+  retrieveSensorList = function(callback) {
+    apiLocation = "/api" //192.168.x.x:1234
+
+    // JSONP default methods
+    JSONP.init({
+      error: function(ex) {
+        console.warn("Failed to retrieve data. " + ex.url);
+      }
+    });
+
+    // Retrieve sensors
+    JSONP.get(
+      apiLocation+"/sensors",
+      {},
+      function(response) {
+        callback(response);
+      }
+    );      
+  };
+
+  /**
+   * Retrieve sensor data for given sensor
+   */
+  retrieveSensorData = function(sensor, timeframe, callback) {
+    apiLocation = "/api" //192.168.x.x:1234
+
+    // JSONP default methods
+    JSONP.init({
+      error: function(ex) {
+        console.warn("Failed to retrieve data. " + ex.url);
+      }
+    });
+
+    // Retrieve sensor data 
+    reqUri = apiLocation+"/sensors/"+sensor;
+    if(timeframe != undefined) {
+    	reqUri = apiLocation+"/sensors/"+sensor+"/"+timeframe.start+"/"+timeframe.end;
+    }
+    JSONP.get(
+      reqUri,
+      {},
+      function(response) {
+        callback(parseSensorData(response))
+      }
+    );      
+  };
+
+  /**
+   * Parses sensor data response to line
+   */
+   parseSensorData = function(response) {
+     //  var lines = [];
+      var line = {};
+      line.name = response.sensor_name;
+      line.data = [];
+      for(key in response.values) {
+        dt = moment.tz(key, "Etc/UCT").tz("Europe/Amsterdam").format('YYYY-MM-DD HH:mm:ss');
+        line.data.push({
+          x: dt,
+          y: (response.values[key])
+        })
+      }
+      // lines.push(line);
+      return line;
+   }
+
+  /**
+   * Called on document window load
+   */
+  init = function() {
+    // Retrieve sensors and add to selects
+    retrieveSensorList(function(result) {
+      // For each select field (of 7), create options
+      for(i=0; i<7; i++) {
+        for(key in result.sensors) {
+          // Select KNMI_VSCHOT_T_0 as initial line. For the other boxes use -
+          if(i == 0 && key == "KNMI_VSCHOT_T_0") {
+            document.getElementById("s"+i).innerHTML += '<option id="s'+i+'_o'+key+'" selected="" value="'+key+'">'+result.sensors[key]+'</option>';
+          }
+          else {
+            document.getElementById("s"+i).innerHTML += '<option id="s'+i+'_o'+key+'" value="'+key+'">'+result.sensors[key]+'</option>';
+          }
+        }
+      }
+
+      // Retrieve settings from GET request string (when given)
+      qs = getQueryString();
+      if(qs.ts != undefined && qs.te != undefined && qs.ts != "" && qs.te != "") {
+        document.getElementById('ts').value = qs.ts;
+        document.getElementById('te').value = qs.te;
+      }
+      else {
+        // Set time values (there were none given in the uri)
+        document.getElementById('ts').value = moment().tz('Europe/Amsterdam').startOf('day').subtract(7, "days").format('YYYY-MM-DD HH:mm:ss');;
+        document.getElementById('te').value = moment().tz('Europe/Amsterdam').endOf('day').format('YYYY-MM-DD HH:mm:ss');
+      }
+      for(i=0; i<7; i++) {
+        if(qs["s"+i] != undefined && qs["s"+i] != "") {
+          document.getElementById("s"+i+"_o"+qs["s"+i]).selected = "true";
+          document.getElementById("s"+i).style.display = "inline";
+        }
+      }
+
+      // When finished, take initial select value to draw graph
+      selectsChanged();
+    });
+
+    // dataset.data.pop();
+    // window.myLine.update();
+  };
+
+  /**
+   * Draws line graph containing given data (lines)
+   */
+  drawLineGraph = function(lines) {
+    var color = Chart.helpers.color;
+
+    var datasets = [];
+    for(key in lines){
+      lt = 0;
+      if(lines[key].data.length <= 1500) {
+        lt = 0.5;
+      }
+      
+      sl = false;
+      tmpsl = {}
+      for(i=0; i<Math.min(lines[key].data.length, 100); i++) {
+        tmpsl[lines[key].data[i].y] = true;
+      }
+      if(Object.keys(tmpsl).length < 5) {
+        sl = true;
+      }
+
+      datasets.push({
+        label: lines[key].name,
+        backgroundColor: color(window.chartColors[chartColorsOrder[datasets.length]]).alpha(0.5).rgbString(),
+        borderColor: window.chartColors[chartColorsOrder[datasets.length]],
+        fill: false,
+        data: lines[key].data,
+        lineTension: lt,
+        steppedLine: sl
+      })
+    }
+
+    var config = {
+      type: 'line',
+      data: {
+        datasets: datasets
+      },
+      options: {
+        responsive: true,
+        title:{
+          display:false,
+          text:"Chart 1"
+        },
+        scales: {
+          xAxes: [{
+            type: "time",
+            display: true,
+            scaleLabel: {
+              display: false,
+              labelString: 'Date'
+            }
+          }],
+          yAxes: [{
+            display: true,
+            scaleLabel: {
+              display: true,
+              labelString: 'value'
+            }
+          }]
+        }
+      }
+    };
+
+    var ctx = document.getElementById("canvas").getContext("2d");
+    window.myLine = new Chart(ctx, config);
+  };
+
+  /**
+   * Adds new line field
+   */
+  addLineField = function() {
+    for(i=1; i<7; i++){
+      if(i>=6) {
+        document.getElementById("btn").disabled = "true";
+      }
+      if(document.getElementById("s"+i).style.display == "none" 
+        && document.getElementById("s"+(i-1)).style.display != "none") {
+        document.getElementById("s"+i).style.display = "inline";
+        break;
+      }
+    }
+  };
+
+  /**
+   * Handle changed input selects
+   */
+  selectsChanged = function() {
+    // Get values from ui selects
+    current = [];
+    for(i=0; i<7; i++) {
+      value = document.getElementById("s"+i).value;
+      if(value != "-") {
+        current.push(value)
+      }
+    }
+
+    // Add to GET uri
+    setQueryString();
+
+    // Get time values from ui
+    uits = document.getElementById('ts').value;
+    uite = document.getElementById('te').value;
+    try {
+      if (uits.trim().length <= 0
+        &&  uite.trim().length <= 0) {
+        timeframe = undefined;
+      }
+      else if (uits.trim().length <= 0) {
+        timeframe = {
+          "start":0,
+          "end":moment(uite.trim(), 'YYYY-MM-DD HH:mm:ss')
+                  .tz("Europe/Amsterdam").unix()
+        };
+      }
+      else if (uite.trim().length <= 0) {
+        timeframe = {
+          "start":moment(uits.trim(), 'YYYY-MM-DD HH:mm:ss')
+                    .tz("Europe/Amsterdam").unix(),
+          "end":253370764800
+        };
+      }
+      else {
+        timeframe = {
+          "start":moment(uits.trim(), 'YYYY-MM-DD HH:mm:ss')
+                    .tz("Europe/Amsterdam").unix(),
+          "end":moment(uite.trim(), 'YYYY-MM-DD HH:mm:ss')
+                    .tz("Europe/Amsterdam").unix()
+        };
+      }
+    }
+    catch (e) {
+      console.warn(e);
+      timeframe = undefined;
+    }
+
+    // Reset
+    //document.getElementById("canvasWrapper").removeChild = document.getElementById("canvas");
+    document.getElementById("canvasWrapper").innerHTML = '<canvas id="canvas"></canvas>';
+    lines = [];
+    window.myLine = undefined;
+
+    // Draw
+    retrieveAndDrawGraph(current, timeframe);
+  };
+
+  /**
+   * Retrieves lines for each in toRetrieve, parses and draws graph on final receival
+   */
+  retrieveAndDrawGraph = function(toRetrieve, timeframe) {
+    finishedRetrieval = []
+    for(key in toRetrieve) {
+      retrieveSensorData(toRetrieve[key], timeframe, function(line) {
+          lines.push(line);
+          finishedRetrieval.push(line.name)
+
+          // Did we retrieve everything? (Taking length shortcut assuming that things don't happen twice and/or something else. Array equal is somewhat cumbersome and not necessary)
+          if(toRetrieve.length == finishedRetrieval.length) {
+            drawLineGraph(lines);
+          }
+      });
+    }
+   };
+
+  // On document window load, call init()
+  window.addEventListener('load', init, false);
+</script> 
+
+<!--HTML-->
+<div style="" id="selectFields">
+  <input type="text" id="ts" style="position: relative; margin: 10px 0 10px 10px; width:130px;" onchange="javascript:selectsChanged()">
+  <input type="text" id="te" style="position: relative; margin: 10px 0 10px 10px; width:130px;" onchange="javascript:selectsChanged()">
+  <select id="s0" style="position: relative; margin: 10px 0 10px 10px;" onchange="javascript:selectsChanged()">
+    <option>-</option>
+  </select>
+  <select id="s1" style="display:none; position: relative; margin: 10px 0 10px 10px;" onchange="javascript:selectsChanged()">
+    <option selected="">-</option>
+  </select>
+  <select id="s2" style="display:none; position: relative; margin: 10px 0 10px 10px;" onchange="javascript:selectsChanged()">
+    <option selected="">-</option>
+  </select>
+  <select id="s3" style="display:none; position: relative; margin: 10px 0 10px 10px;" onchange="javascript:selectsChanged()">
+    <option selected="">-</option>
+  </select>
+  <select id="s4" style="display:none; position: relative; margin: 10px 0 10px 10px;" onchange="javascript:selectsChanged()">
+    <option selected="">-</option>
+  </select>
+  <select id="s5" style="display:none; position: relative; margin: 10px 0 10px 10px;" onchange="javascript:selectsChanged()">
+    <option selected="">-</option>
+  </select>
+  <select id="s6" style="display:none; position: relative; margin: 10px 0 10px 10px;" onchange="javascript:selectsChanged()">
+    <option selected="">-</option>
+  </select>
+  <input type="button" id="btn" value="\n" onclick="javascript:addLineField()" style="margin: 10px 0 10px 10px">
+  <input type="button" id="btn" value="⌘R/F5!! (soft)" onclick="javascript:selectsChanged()" style="margin: 10px">
+</div>
+<div style="position:absolute; width:86%; height:86%; left:7%; top:16%" id="canvasWrapper">
+  <canvas id="canvas"></canvas>
+</div>
+
+</body> 
+</html>
